@@ -1,0 +1,161 @@
+:root {
+  color-scheme: light;
+  font-family: ui-rounded, "SF Pro Rounded", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+  background: #f6fbf4;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
+  position: fixed;
+  inset: 0;
+}
+
+body {
+  background:
+    radial-gradient(circle at 18% 20%, rgba(255, 252, 217, 0.9), transparent 34%),
+    radial-gradient(circle at 82% 72%, rgba(205, 238, 231, 0.72), transparent 38%),
+    linear-gradient(145deg, #f8fff2 0%, #eaf8f7 48%, #fff8ef 100%);
+}
+
+#game {
+  display: block;
+  width: 100vw;
+  height: 100dvh;
+  cursor: none;
+  touch-action: none;
+}
+
+.start-button {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: 5;
+  width: min(34vw, 180px);
+  aspect-ratio: 1;
+  border: 0;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: #fffef8;
+  box-shadow: 0 18px 42px rgba(110, 145, 128, 0.22), inset 0 -7px 0 rgba(255, 219, 149, 0.35);
+  color: #43736c;
+  font-size: clamp(22px, 5vw, 34px);
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.start-button:active {
+  transform: translate(-50%, -50%) scale(0.96);
+}
+
+.start-button.is-hidden {
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 280ms ease;
+}
+
+.settings-hotspot {
+  position: fixed;
+  right: max(12px, env(safe-area-inset-right));
+  top: max(12px, env(safe-area-inset-top));
+  z-index: 4;
+  width: 56px;
+  height: 56px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  opacity: 0.02;
+}
+
+.settings-panel {
+  width: min(420px, calc(100vw - 32px));
+  border: 0;
+  border-radius: 8px;
+  padding: 0;
+  color: #274640;
+  background: #fffef8;
+  box-shadow: 0 22px 70px rgba(56, 87, 78, 0.28);
+}
+
+.settings-panel::backdrop {
+  background: rgba(53, 77, 71, 0.22);
+}
+
+.settings-content {
+  display: grid;
+  gap: 18px;
+  padding: 20px;
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.settings-header h1 {
+  margin: 0;
+  font-size: 20px;
+  letter-spacing: 0;
+}
+
+.icon-button {
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 50%;
+  background: #eaf4ee;
+  color: #355b55;
+  font-size: 26px;
+  line-height: 1;
+}
+
+.control-row,
+.toggle-row {
+  display: grid;
+  grid-template-columns: 76px 1fr;
+  align-items: center;
+  gap: 14px;
+  min-height: 40px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.toggle-row {
+  grid-template-columns: 1fr auto;
+}
+
+input[type="range"] {
+  width: 100%;
+  accent-color: #72b9a9;
+}
+
+input[type="checkbox"] {
+  width: 28px;
+  height: 28px;
+  accent-color: #72b9a9;
+}
+
+output {
+  min-width: 20px;
+  text-align: right;
+}
+
+@media (orientation: portrait) {
+  .start-button {
+    width: min(42vw, 180px);
+  }
+}

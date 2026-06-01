@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+    <meta name="theme-color" content="#f6fbf4" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="猫鼠追追" />
+    <title>猫鼠追追</title>
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="./icons/icon-192.svg" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <canvas id="game" aria-label="猫咪追逐可爱小老鼠的互动游戏画面"></canvas>
+
+    <button id="startButton" class="start-button" type="button">
+      <span>开始</span>
+    </button>
+
+    <button id="settingsHotspot" class="settings-hotspot" type="button" aria-label="长按打开设置"></button>
+
+    <dialog id="settingsPanel" class="settings-panel">
+      <form method="dialog" class="settings-content">
+        <div class="settings-header">
+          <h1>主人设置</h1>
+          <button id="closeSettings" class="icon-button" type="submit" aria-label="关闭">×</button>
+        </div>
+
+        <label class="control-row">
+          <span>音量</span>
+          <input id="volume" type="range" min="0" max="1" step="0.01" value="0.48" />
+        </label>
+
+        <label class="control-row">
+          <span>游动速度</span>
+          <input id="speed" type="range" min="0.45" max="1.6" step="0.05" value="0.9" />
+        </label>
+      </form>
+    </dialog>
+
+    <script src="./src/game.js" type="module"></script>
+  </body>
+</html>
