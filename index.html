@@ -6,14 +6,33 @@
     <meta name="theme-color" content="#f6fbf4" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="猫咪追鼠" />
-    <title>猫咪追鼠</title>
+    <meta name="apple-mobile-web-app-title" content="猫咪追逐" />
+    <title>猫咪追逐</title>
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="apple-touch-icon" href="./icons/icon-192.svg" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <canvas id="game" aria-label="猫咪追逐可爱小老鼠的互动游戏画面"></canvas>
+    <canvas id="game" aria-label="猫咪追逐互动游戏画面"></canvas>
+
+    <button id="themeButton" class="theme-button" type="button" aria-expanded="false" aria-controls="themePanel">
+      主题
+    </button>
+
+    <div id="themePanel" class="theme-panel" hidden>
+      <button class="theme-option is-active" type="button" data-theme="mouse">
+        <span class="theme-swatch theme-swatch-mouse"></span>
+        小老鼠
+      </button>
+      <button class="theme-option" type="button" data-theme="yarn">
+        <span class="theme-swatch theme-swatch-yarn"></span>
+        亮蓝毛线球
+      </button>
+      <button class="theme-option" type="button" data-theme="paper">
+        <span class="theme-swatch theme-swatch-paper"></span>
+        浅绿纸团
+      </button>
+    </div>
 
     <button id="startButton" class="start-button" type="button">
       <span>开始</span>
@@ -33,10 +52,19 @@
           <input id="volume" type="range" min="0" max="1" step="0.01" value="0.62" />
         </label>
 
-        <label class="control-row">
-          <span>速度</span>
-          <input id="speed" type="range" min="0.8" max="2.6" step="0.05" value="1.35" />
-        </label>
+        <section class="speed-module" aria-labelledby="speedTitle">
+          <div class="speed-module-header">
+            <span id="speedTitle">速度</span>
+            <output id="speedValue" for="speed">温和</output>
+          </div>
+          <div class="speed-presets" role="group" aria-label="速度预设">
+            <button class="speed-preset" type="button" data-speed="0.75">很慢</button>
+            <button class="speed-preset is-active" type="button" data-speed="1.05">温和</button>
+            <button class="speed-preset" type="button" data-speed="1.35">标准</button>
+            <button class="speed-preset" type="button" data-speed="1.75">快</button>
+          </div>
+          <input id="speed" type="range" min="0.65" max="2.6" step="0.05" value="1.05" aria-label="精细调节速度" />
+        </section>
       </form>
     </dialog>
 
