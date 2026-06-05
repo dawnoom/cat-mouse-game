@@ -14,6 +14,7 @@ const settings = {
 const MOUSE_COUNT = 1;
 const BODY_SCALE = 1.72;
 const TAIL_BODY_MULTIPLIER = 4.6;
+const MOVING_PHASES = new Set(["reappear", "creep", "dash", "zigzag", "escape"]);
 const BLUE_MOUSE = {
   body: "#66bff2",
   bodyDeep: "#3497d6",
@@ -47,6 +48,7 @@ const state = {
   movementAudio: null,
   wakeLock: null,
   pointerCooldown: new Map(),
+  hideouts: [],
 };
 
 function resize() {
@@ -56,6 +58,7 @@ function resize() {
   canvas.width = Math.floor(state.width * state.dpr);
   canvas.height = Math.floor(state.height * state.dpr);
   ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+  state.hideouts = createHideouts();
 }
 
 function rand(min, max) {
@@ -74,8 +77,19 @@ function uuid() {
   return globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
 }
 
+function createHideouts() {
+  const w = state.width;
+  const h = state.height;
+  return [
+    { x: -16, y: h * 0.22, rx: 72, ry: 108, angle: 0.1 },
+    { x: w + 16, y: h * 0.68, rx: 84, ry: 124, angle: -0.12 },
+    { x: w * 0.52, y: -18, rx: 128, ry: 58, angle: 0.04 },
+    { x: w * 0.22, y: h + 18, rx: 122, ry: 62, angle: -0.08 },
+  ];
+}
+
 function routeDurationForDistance(distance, speed) {
-  return clamp((distance / Math.max(1, speed)) * rand(0.8, 1.12), 1.25, 4.6);
+  return clamp((distance / Math.max(1, speed)) * rand(0.74, 1.08), 0.65, 4.2);
 }
 
 function edgePoint(radius, inset = false) {
@@ -88,7 +102,7 @@ function edgePoint(radius, inset = false) {
 }
 
 function farPoint(from, radius, allowExit = false) {
-  const minDistance = Math.min(state.width, state.height) * rand(0.56, 0.92);
+  const minDistance = Math.min(state.width, state.height) * rand(0.62, 0.98);
   const maxAttempts = 28;
   for (let i = 0; i < maxAttempts; i += 1) {
     const point = Math.random() < 0.18 || allowExit
@@ -104,6 +118,15 @@ function farPoint(from, radius, allowExit = false) {
   return edgePoint(radius);
 }
 
+function nearPoint(from, radius) {
+  const distance = rand(Math.min(state.width, state.height) * 0.16, Math.min(state.width, state.height) * 0.38);
+  const angle = rand(0, Math.PI * 2);
+  return {
+    x: clamp(from.x + Math.cos(angle) * distance, radius * 1.15, state.width - radius * 1.15),
+    y: clamp(from.y + Math.sin(angle) * distance, radius * 1.15, state.height - radius * 1.15),
+  };
+}
+
 function spawnMouse(overrides = {}) {
   const radius = rand(36, 43) * BODY_SCALE;
   const start = overrides.x === undefined ? edgePoint(radius, true) : { x: overrides.x, y: overrides.y };
@@ -115,7 +138,8 @@ function spawnMouse(overrides = {}) {
     hitRadius: radius * 1.16,
     vx: 0,
     vy: 0,
-    phase: "dash",
+    phase: "hide",
+    previousPhase: "hide",
     phaseUntil: performance.now() + 1000,
     routeStartX: start.x,
     routeStartY: start.y,
@@ -125,6 +149,9 @@ function spawnMouse(overrides = {}) {
     routeDuration: 2,
     routeCurve: rand(-1, 1),
     moveBlend: 1,
+    visibility: 1,
+    trail: [],
+    zigzagSeed: rand(0, Math.PI * 2),
     stride: rand(0, Math.PI * 2),
     tailWobble: rand(0, Math.PI * 2),
     tailSeed: rand(0, Math.PI * 2),
@@ -134,7 +161,7 @@ function spawnMouse(overrides = {}) {
     respawnAt: 0,
     colors: BLUE_MOUSE,
   };
-  chooseNextPhase(mouse, performance.now(), true);
+  chooseNextPhase(mouse, performance.now(), "reappear");
   return mouse;
 }
 
@@ -143,38 +170,95 @@ function syncMice() {
   while (state.targets.length > MOUSE_COUNT) state.targets.pop();
 }
 
-function chooseNextPhase(target, now, forceMove = false) {
-  const next = forceMove ? "dash" : choose(["dash", "dash", "run", "run", "pause", "peek"]);
-  target.phase = next;
-  target.moveBlend = next === "pause" || next === "peek" ? target.moveBlend : Math.max(target.moveBlend, 0.45);
+function nextPhaseAfter(phase) {
+  if (phase === "hide") return "reappear";
+  if (phase === "reappear") return choose(["creep", "creep", "freeze"]);
+  if (phase === "creep") return choose(["freeze", "dash", "zigzag"]);
+  if (phase === "freeze") return choose(["dash", "dash", "zigzag", "creep"]);
+  if (phase === "dash") return choose(["freeze", "zigzag", "escape"]);
+  if (phase === "zigzag") return choose(["freeze", "dash", "escape"]);
+  if (phase === "escape") return "hide";
+  return "creep";
+}
 
-  if (next === "pause" || next === "peek") {
-    target.phaseUntil = now + rand(next === "peek" ? 260 : 420, next === "peek" ? 760 : 1250);
+function chooseNextPhase(target, now, forcedPhase = null) {
+  const next = forcedPhase || nextPhaseAfter(target.phase);
+  target.previousPhase = target.phase;
+  target.phase = next;
+  target.zigzagSeed = rand(0, Math.PI * 2);
+
+  if (next === "hide") {
+    target.visibility = 0;
+    target.moveBlend = 0;
+    target.phaseUntil = now + rand(520, 1400);
+    target.vx = 0;
+    target.vy = 0;
+    target.trail.length = 0;
+    return;
+  }
+
+  if (next === "freeze") {
+    target.visibility = 1;
+    target.phaseUntil = now + rand(260, 1200);
     target.vx = 0;
     target.vy = 0;
     return;
   }
 
   const from = { x: target.x, y: target.y };
-  const allowExit = Math.random() < 0.38;
-  const destination = farPoint(from, target.radius, allowExit);
-  const distance = Math.hypot(destination.x - from.x, destination.y - from.y);
-  const speed = next === "dash" ? rand(310, 460) : rand(185, 285);
-  target.routeStartX = from.x;
-  target.routeStartY = from.y;
+  let destination;
+  let speed;
+
+  if (next === "reappear") {
+    const start = edgePoint(target.radius, true);
+    target.x = start.x;
+    target.y = start.y;
+    target.routeStartX = start.x;
+    target.routeStartY = start.y;
+    destination = nearPoint({ x: clamp(start.x, 0, state.width), y: clamp(start.y, 0, state.height) }, target.radius);
+    speed = rand(180, 260);
+    target.visibility = 0.74;
+  } else if (next === "creep") {
+    destination = nearPoint(from, target.radius);
+    speed = rand(95, 165);
+    target.visibility = 1;
+  } else if (next === "dash") {
+    destination = farPoint(from, target.radius, false);
+    speed = rand(420, 640);
+    target.visibility = 1;
+  } else if (next === "zigzag") {
+    destination = farPoint(from, target.radius, Math.random() < 0.18);
+    speed = rand(340, 520);
+    target.visibility = 1;
+  } else {
+    destination = farPoint(from, target.radius, true);
+    speed = rand(520, 720);
+    target.visibility = 1;
+  }
+
+  if (next !== "reappear") {
+    target.routeStartX = from.x;
+    target.routeStartY = from.y;
+  }
+  const routeFrom = { x: target.routeStartX, y: target.routeStartY };
+  const distance = Math.hypot(destination.x - routeFrom.x, destination.y - routeFrom.y);
   target.destX = destination.x;
   target.destY = destination.y;
   target.routeElapsed = 0;
   target.routeDuration = routeDurationForDistance(distance, speed);
-  target.routeCurve = Math.random() < 0.48 ? 0 : rand(-1.15, 1.15);
+  target.routeCurve = next === "creep" ? rand(-0.45, 0.45) : Math.random() < 0.38 ? 0 : rand(-1.35, 1.35);
   target.speedBase = speed;
   target.phaseUntil = now + target.routeDuration * 1000;
+  target.moveBlend = Math.max(target.moveBlend, next === "creep" ? 0.35 : 0.72);
+  if (next === "dash" || next === "zigzag" || next === "escape") {
+    playScrapeBurst(next === "escape" ? 0.24 : 0.17);
+  }
 }
 
 function respawnFromEdge(target, now) {
   const replacement = spawnMouse(edgePoint(target.radius, true));
   Object.assign(target, replacement);
-  chooseNextPhase(target, now, true);
+  chooseNextPhase(target, now, "reappear");
 }
 
 function initAudio() {
@@ -329,7 +413,7 @@ function startMovementNoise() {
 
 async function unlockAudio() {
   initMovementElementAudio();
-  const elementPlay = state.movementAudio?.play().catch(() => {});
+  state.movementAudio?.play().catch(() => {});
   initAudio();
   if (state.audio?.state === "suspended") await state.audio.resume();
   if (state.masterGain && state.audio) {
@@ -338,7 +422,6 @@ async function unlockAudio() {
   }
   startMovementNoise();
   playCatchSound(860, 0.22);
-  await elementPlay;
 }
 
 function setVolume(value) {
@@ -375,31 +458,86 @@ function playCatchSound(base = rand(680, 980), duration = 0.16) {
   sparkle.stop(now + duration + 0.03);
 }
 
-function movementIntensity() {
-  const active = state.targets.filter((target) => !target.caught);
-  if (!active.length) return 0;
-  const total = active.reduce((sum, target) => {
-    const speed = Math.hypot(target.vx, target.vy);
-    const phaseBoost = target.phase === "dash" ? 1.18 : target.phase === "run" ? 0.92 : 0.06;
-    return sum + clamp((speed / 420) * target.moveBlend * phaseBoost, 0, 1);
-  }, 0);
-  return total / active.length;
+function playScrapeBurst(level = 0.18) {
+  if (!state.audio || !state.masterGain) return;
+  const now = state.audio.currentTime;
+  const length = Math.floor(state.audio.sampleRate * 0.09);
+  const buffer = state.audio.createBuffer(1, length, state.audio.sampleRate);
+  const data = buffer.getChannelData(0);
+  let scrape = 0;
+  for (let i = 0; i < length; i += 1) {
+    scrape = scrape * 0.82 + (Math.random() * 2 - 1) * 0.18;
+    const fade = 1 - i / length;
+    data[i] = scrape * fade;
+  }
+  const source = state.audio.createBufferSource();
+  const filter = state.audio.createBiquadFilter();
+  const gain = state.audio.createGain();
+  filter.type = "bandpass";
+  filter.frequency.value = rand(900, 1700);
+  filter.Q.value = 1.8;
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(level, now + 0.01);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.09);
+  source.buffer = buffer;
+  source.connect(filter);
+  filter.connect(gain);
+  gain.connect(state.masterGain);
+  source.start(now);
+  source.stop(now + 0.1);
 }
 
-function updateMovementSound(intensity) {
-  const audible = state.running && settings.volume > 0 ? clamp(intensity, 0, 1) : 0;
+function movementProfile() {
+  const active = state.targets.filter((target) => !target.caught);
+  if (!active.length) return { movement: 0, plastic: 0, cardboard: 0, tap: 0, rate: 1 };
+  const total = active.reduce((sum, target) => {
+    const speed = Math.hypot(target.vx, target.vy);
+    const speedRatio = clamp(speed / 620, 0, 1);
+    const phase = target.phase;
+    const base = {
+      hide: { movement: 0, plastic: 0, cardboard: 0, tap: 0, rate: 0.8 },
+      reappear: { movement: 0.28, plastic: 0.24, cardboard: 0.08, tap: 0.03, rate: 0.86 },
+      creep: { movement: 0.22, plastic: 0.2, cardboard: 0.07, tap: 0.04, rate: 0.78 },
+      freeze: { movement: 0.04, plastic: 0.035, cardboard: 0.02, tap: 0, rate: 0.72 },
+      dash: { movement: 0.86, plastic: 0.42, cardboard: 0.28, tap: 0.28, rate: 1.25 },
+      zigzag: { movement: 0.78, plastic: 0.36, cardboard: 0.34, tap: 0.24, rate: 1.18 },
+      escape: { movement: 1, plastic: 0.48, cardboard: 0.42, tap: 0.32, rate: 1.34 },
+    }[phase] || { movement: 0.2, plastic: 0.12, cardboard: 0.08, tap: 0.04, rate: 1 };
+    return {
+      movement: sum.movement + base.movement * (0.72 + speedRatio * 0.46) * target.moveBlend,
+      plastic: sum.plastic + base.plastic * (0.72 + speedRatio * 0.48),
+      cardboard: sum.cardboard + base.cardboard * (0.7 + speedRatio * 0.58),
+      tap: sum.tap + base.tap * (0.55 + speedRatio * 0.75),
+      rate: sum.rate + base.rate,
+    };
+  }, { movement: 0, plastic: 0, cardboard: 0, tap: 0, rate: 0 });
+  const divisor = active.length;
+  return {
+    movement: clamp(total.movement / divisor, 0, 1),
+    plastic: clamp(total.plastic / divisor, 0, 1),
+    cardboard: clamp(total.cardboard / divisor, 0, 1),
+    tap: clamp(total.tap / divisor, 0, 1),
+    rate: clamp(total.rate / divisor, 0.7, 1.45),
+  };
+}
+
+function updateMovementSound(profile) {
+  const movement = state.running && settings.volume > 0 ? clamp(profile.movement, 0, 1) : 0;
+  const plastic = state.running && settings.volume > 0 ? clamp(profile.plastic, 0, 1) : 0;
+  const cardboard = state.running && settings.volume > 0 ? clamp(profile.cardboard, 0, 1) : 0;
+  const tap = state.running && settings.volume > 0 ? clamp(profile.tap, 0, 1) : 0;
   if (state.movementAudio) {
-    state.movementAudio.volume = audible > 0.025 ? clamp(settings.volume * (0.64 + audible * 0.56), 0, 1) : 0;
-    state.movementAudio.playbackRate = 0.82 + audible * 0.42;
-    if (audible > 0.025 && state.movementAudio.paused) {
+    state.movementAudio.volume = movement > 0.025 ? clamp(settings.volume * (0.28 + movement * 0.56), 0, 0.88) : 0;
+    state.movementAudio.playbackRate = profile.rate || 1;
+    if (movement > 0.025 && state.movementAudio.paused) {
       state.movementAudio.play().catch(() => {});
     }
   }
   if (!state.audio || !state.plasticGain || !state.cardboardGain || !state.tapGain) return;
   const now = state.audio.currentTime;
-  state.plasticGain.gain.setTargetAtTime(audible > 0.025 ? 0.18 + audible * 0.19 : 0.0001, now, 0.035);
-  state.cardboardGain.gain.setTargetAtTime(audible > 0.025 ? 0.12 + audible * 0.15 : 0.0001, now, 0.045);
-  state.tapGain.gain.setTargetAtTime(audible > 0.025 ? 0.08 + audible * 0.12 : 0.0001, now, 0.028);
+  state.plasticGain.gain.setTargetAtTime(plastic > 0.02 ? 0.035 + plastic * 0.42 : 0.0001, now, 0.035);
+  state.cardboardGain.gain.setTargetAtTime(cardboard > 0.02 ? 0.025 + cardboard * 0.34 : 0.0001, now, 0.045);
+  state.tapGain.gain.setTargetAtTime(tap > 0.02 ? 0.018 + tap * 0.32 : 0.0001, now, 0.025);
 }
 
 function addRipple(x, y, color) {
@@ -439,6 +577,7 @@ function handlePointer(event) {
   for (let i = state.targets.length - 1; i >= 0; i -= 1) {
     const target = state.targets[i];
     if (target.caught) continue;
+    if (target.visibility < 0.28) continue;
     if (Math.hypot(x - target.x, y - target.y) <= target.hitRadius) {
       state.pointerCooldown.set(event.pointerId, now);
       catchTarget(target, x, y);
@@ -449,21 +588,21 @@ function handlePointer(event) {
 
 function updateTarget(target, dt, now) {
   if (target.caught) {
-    target.tailWobble += dt * 12.5;
+    target.tailWobble += dt * 14.5;
     if (now >= target.respawnAt) Object.assign(target, spawnMouse());
     return;
   }
 
-  target.tailWobble += dt * 12.5;
-  target.stride += dt * (target.phase === "dash" ? 17 : target.phase === "run" ? 10.5 : 4.2);
+  target.tailWobble += dt * (target.phase === "freeze" ? 9.5 : target.phase === "creep" ? 11.2 : 15.8);
+  target.stride += dt * (target.phase === "dash" || target.phase === "escape" ? 19 : target.phase === "zigzag" ? 16 : target.phase === "creep" ? 7.2 : 3.8);
   target.blink += dt;
 
   if (now >= target.phaseUntil) {
     chooseNextPhase(target, now);
   }
 
-  const moving = target.phase === "dash" || target.phase === "run";
-  const targetBlend = moving ? 1 : 0.04;
+  const moving = MOVING_PHASES.has(target.phase);
+  const targetBlend = moving ? (target.phase === "creep" || target.phase === "reappear" ? 0.62 : 1) : 0.04;
   target.moveBlend += (targetBlend - target.moveBlend) * Math.min(1, dt * (moving ? 6.8 : 8.5));
 
   if (moving) {
@@ -477,18 +616,30 @@ function updateTarget(target, dt, now) {
     const distance = Math.max(1, Math.hypot(dx, dy));
     const nx = -dy / distance;
     const ny = dx / distance;
-    const curve = Math.sin(progress * Math.PI) * target.routeCurve * Math.min(210, distance * 0.28);
+    const curveBase = Math.sin(progress * Math.PI) * target.routeCurve * Math.min(230, distance * 0.3);
+    const zigzag = target.phase === "zigzag"
+      ? Math.sin(progress * Math.PI * 7.5 + target.zigzagSeed) * Math.sin(progress * Math.PI) * Math.min(150, distance * 0.2)
+      : 0;
+    const curve = curveBase + zigzag;
     const oldX = target.x;
     const oldY = target.y;
     target.x = sx + dx * eased + nx * curve;
     target.y = sy + dy * eased + ny * curve;
     target.vx = (target.x - oldX) / Math.max(dt, 0.001);
     target.vy = (target.y - oldY) / Math.max(dt, 0.001);
+    if (Math.hypot(target.vx, target.vy) > 80) {
+      target.trail.unshift({ x: oldX, y: oldY, age: 0, size: target.radius * rand(0.18, 0.32) });
+      target.trail.length = Math.min(target.trail.length, target.phase === "creep" ? 4 : 9);
+    }
     if (progress >= 1) chooseNextPhase(target, now);
   } else {
     target.vx *= 0.84;
     target.vy *= 0.84;
   }
+
+  for (const mark of target.trail) mark.age += dt;
+  target.trail = target.trail.filter((mark) => mark.age < 0.45);
+  target.visibility += ((target.phase === "hide" ? 0 : 1) - target.visibility) * Math.min(1, dt * 8);
 
   const exitMargin = target.radius * 4.8;
   if (
@@ -517,26 +668,48 @@ function updateEffects(dt) {
 
 function drawBackground(time) {
   const gradient = ctx.createLinearGradient(0, 0, state.width, state.height);
-  gradient.addColorStop(0, "#f7fff4");
-  gradient.addColorStop(0.48, "#eefbf8");
-  gradient.addColorStop(1, "#fff8ed");
+  gradient.addColorStop(0, "#f8fff6");
+  gradient.addColorStop(0.5, "#f0fbf7");
+  gradient.addColorStop(1, "#fff9ef");
   ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, state.width, state.height);
 
   ctx.save();
-  ctx.globalAlpha = 0.22;
-  for (let i = 0; i < 18; i += 1) {
-    const x = ((i * 173 + time * (10 + i * 0.6)) % (state.width + 180)) - 90;
+  ctx.globalAlpha = 0.15;
+  for (let i = 0; i < 14; i += 1) {
+    const x = ((i * 173 + time * (5 + i * 0.25)) % (state.width + 180)) - 90;
     const y = 42 + ((i * 83) % Math.max(120, state.height - 84));
     ctx.fillStyle = i % 3 === 0 ? "#fce7b0" : i % 3 === 1 ? "#ccefeb" : "#d9efff";
     ctx.beginPath();
-    ctx.ellipse(x, y, 18 + (i % 5) * 7, 8 + (i % 4) * 4, i * 0.7, 0, Math.PI * 2);
+    ctx.ellipse(x, y, 14 + (i % 5) * 6, 7 + (i % 4) * 3, i * 0.7, 0, Math.PI * 2);
     ctx.fill();
+  }
+  ctx.restore();
+
+  drawHideouts(time);
+}
+
+function drawHideouts(time) {
+  ctx.save();
+  for (const [index, hole] of state.hideouts.entries()) {
+    const pulse = 0.92 + Math.sin(time * 1.2 + index) * 0.04;
+    ctx.translate(hole.x, hole.y);
+    ctx.rotate(hole.angle);
+    ctx.fillStyle = "rgba(181, 217, 209, 0.22)";
+    ctx.beginPath();
+    ctx.ellipse(0, 0, hole.rx * pulse, hole.ry * pulse, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "rgba(70, 126, 139, 0.1)";
+    ctx.beginPath();
+    ctx.ellipse(0, 0, hole.rx * 0.62 * pulse, hole.ry * 0.58 * pulse, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
   }
   ctx.restore();
 }
 
 function drawMouse(target) {
+  if (target.visibility <= 0.03) return;
   const angle = Math.atan2(target.vy, target.vx) || 0;
   const r = target.radius;
   const move = target.moveBlend;
@@ -544,13 +717,37 @@ function drawMouse(target) {
   const tailPhase = target.tailWobble + target.tailSeed;
   const eyeOpen = (target.blink % 4.2) > 0.16 ? 1 : 0.42;
 
+  drawTrail(target);
+
   ctx.save();
   ctx.translate(target.x, target.y);
   ctx.rotate(angle);
+  ctx.globalAlpha = clamp(target.visibility, 0, 1);
 
   ctx.shadowColor = "rgba(52, 86, 94, 0.16)";
   ctx.shadowBlur = 18;
   ctx.shadowOffsetY = 10;
+
+  ctx.strokeStyle = target.colors.tail;
+  ctx.save();
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.78)";
+  ctx.lineWidth = Math.max(10, r * 0.19);
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  ctx.moveTo(-r * 0.72, r * 0.05);
+  for (let i = 1; i <= 8; i += 1) {
+    const p = i / 8;
+    const x = -r * (0.72 + TAIL_BODY_MULTIPLIER * p);
+    const amp = r * (0.58 + 0.38 * p) * (1.08 + move * 0.35);
+    const y = Math.sin(tailPhase + p * 8.4 + Math.sin(tailPhase * 0.47 + p * 3.5) * 0.95) * amp;
+    const prevP = (i - 0.5) / 8;
+    const cx = -r * (0.72 + TAIL_BODY_MULTIPLIER * prevP);
+    const cy = Math.sin(tailPhase + prevP * 8.4 + Math.sin(tailPhase * 0.47 + prevP * 3.5) * 0.95) * amp * 0.9;
+    ctx.quadraticCurveTo(cx, cy, x, y);
+  }
+  ctx.stroke();
+  ctx.restore();
 
   ctx.strokeStyle = target.colors.tail;
   ctx.lineWidth = Math.max(7, r * 0.13);
@@ -569,6 +766,15 @@ function drawMouse(target) {
     const cy = Math.sin(tailPhase + prevP * 8.4 + Math.sin(tailPhase * 0.47 + prevP * 3.5) * 0.95) * amp * 0.9;
     ctx.quadraticCurveTo(cx, cy, x, y);
   }
+  ctx.stroke();
+
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.84)";
+  ctx.lineWidth = Math.max(5, r * 0.08);
+  ctx.beginPath();
+  ctx.ellipse(-r * 0.1, 0, r * 0.89, r * 0.61, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.ellipse(r * 0.52, 0, r * 0.65, r * 0.55, 0, 0, Math.PI * 2);
   ctx.stroke();
 
   ctx.fillStyle = target.colors.bodyDeep;
@@ -658,6 +864,20 @@ function drawMouse(target) {
   ctx.restore();
 }
 
+function drawTrail(target) {
+  if (!target.trail.length || target.phase === "creep") return;
+  ctx.save();
+  for (const mark of target.trail) {
+    const progress = mark.age / 0.45;
+    ctx.globalAlpha = (1 - progress) * 0.16 * target.visibility;
+    ctx.fillStyle = target.colors.bodyDeep;
+    ctx.beginPath();
+    ctx.ellipse(mark.x, mark.y, mark.size * 1.4, mark.size * 0.7, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
 function drawEffects() {
   for (const ripple of state.ripples) {
     const progress = ripple.age / ripple.ttl;
@@ -694,7 +914,7 @@ function frame(time) {
     if (!target.caught) drawMouse(target);
   }
   drawEffects();
-  updateMovementSound(movementIntensity());
+  updateMovementSound(movementProfile());
 
   requestAnimationFrame(frame);
 }
@@ -702,14 +922,14 @@ function frame(time) {
 async function startGame() {
   if (state.running || state.starting) return;
   state.starting = true;
-  await unlockAudio();
-  await enterCatMode();
   state.running = true;
   state.userStarted = true;
   localStorage.setItem("catMouseStarted", "1");
   startButton.classList.add("is-hidden");
   startButton.querySelector("span").textContent = "继续";
   state.starting = false;
+  unlockAudio().catch(() => {});
+  enterCatMode();
 }
 
 async function enterCatMode() {
@@ -760,7 +980,7 @@ function stopAudio() {
     state.masterGain.gain.cancelScheduledValues(state.audio.currentTime);
     state.masterGain.gain.setValueAtTime(0.0001, state.audio.currentTime);
   }
-  updateMovementSound(0);
+  updateMovementSound({ movement: 0, plastic: 0, cardboard: 0, tap: 0, rate: 1 });
   if (state.audio?.state === "running") state.audio.suspend();
   if (state.movementAudio) {
     state.movementAudio.pause();
